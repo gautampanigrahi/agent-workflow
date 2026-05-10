@@ -1,0 +1,1150 @@
+% =============================================================================
+%  AWL: A Declarative Agent Workflow Language with Big-Step Operational
+%       Semantics -- Course Report
+%  Authors: Ankush Chandra, Gautam Panigrahi, Kunal Elchipuram
+%  SJSU -- CS Dept, May 2026
+% =============================================================================
+\documentclass[10pt]{article}
+
+% ---- Layout ------------------------------------------------------------------
+\usepackage[margin=0.85in, top=1in, bottom=1in, columnsep=0.3in]{geometry}
+\usepackage{multicol}
+
+% ---- Math / Semantics --------------------------------------------------------
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{mathpartir}          % \inferrule, mathpar environment
+\usepackage{stmaryrd}            % \llbracket, \rrbracket
+
+% ---- Code listings -----------------------------------------------------------
+\usepackage{listings}
+\usepackage{xcolor}
+
+\definecolor{lbg}{rgb}{0.97,0.97,0.97}
+\definecolor{lcmt}{rgb}{0.25,0.50,0.25}
+\definecolor{lkw}{rgb}{0.00,0.00,0.60}
+\definecolor{lstr}{rgb}{0.50,0.00,0.50}
+\definecolor{lframe}{rgb}{0.75,0.75,0.75}
+
+\lstdefinestyle{hs}{
+  backgroundcolor  = \color{lbg},
+  commentstyle     = \color{lcmt}\itshape,
+  keywordstyle     = \color{lkw}\bfseries,
+  stringstyle      = \color{lstr},
+  basicstyle       = \ttfamily\scriptsize,
+  breaklines       = true,
+  keepspaces       = true,
+  showstringspaces = false,
+  tabsize          = 2,
+  language         = Haskell,
+  morekeywords     = {data,where,case,of,do,let,in,return,type,
+                      newtype,deriving,module,import,instance,class,
+                      Map,IO,String,Bool,Int,Double,Integer,Maybe},
+  frame            = single,
+  rulecolor        = \color{lframe},
+  framesep         = 2pt,
+  xleftmargin      = 4pt,
+  xrightmargin     = 4pt,
+  belowskip        = 4pt,
+  aboveskip        = 4pt
+}
+
+\lstdefinelanguage{AWL}{
+  keywords         = {config,agent,from,let,if,then,else,fail,retry,
+                      try,catch,print,FixedAgent,CustomAI,prompt,model,
+                      true,false,null,python,http,llm,mock},
+  sensitive        = true,
+  comment          = [l]{//},
+  morecomment      = [s]{/*}{*/},
+  morestring       = [b]"
+}
+\lstdefinestyle{awl}{
+  backgroundcolor  = \color{lbg},
+  commentstyle     = \color{lcmt}\itshape,
+  keywordstyle     = \color{lkw}\bfseries,
+  stringstyle      = \color{lstr},
+  basicstyle       = \ttfamily\scriptsize,
+  breaklines       = true,
+  keepspaces       = true,
+  showstringspaces = false,
+  tabsize          = 2,
+  language         = AWL,
+  frame            = single,
+  rulecolor        = \color{lframe},
+  framesep         = 2pt,
+  xleftmargin      = 4pt,
+  xrightmargin     = 4pt,
+  belowskip        = 4pt,
+  aboveskip        = 4pt
+}
+
+% ---- Typography --------------------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{parskip}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+
+% ---- Tables / Floats ---------------------------------------------------------
+\usepackage{booktabs}
+\usepackage{caption}
+\captionsetup{font=small, labelfont=bf, skip=4pt}
+
+% ---- Hyperlinks --------------------------------------------------------------
+\usepackage[hidelinks]{hyperref}
+
+% ---- List spacing ------------------------------------------------------------
+\usepackage{enumitem}
+\setlist{itemsep=2pt, topsep=3pt, parsep=0pt}
+
+% ---- Section heading sizes ---------------------------------------------------
+\usepackage{titlesec}
+\titleformat{\section}{\normalsize\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\small\bfseries}{\thesubsection.}{0.5em}{}
+\titleformat{\subsubsection}{\small\itshape}{\thesubsubsection.}{0.4em}{}
+\titlespacing*{\section}{0pt}{8pt}{4pt}
+\titlespacing*{\subsection}{0pt}{5pt}{2pt}
+
+% ---- Semantic macros ---------------------------------------------------------
+\newcommand{\A}{\mathcal{A}}
+\newcommand{\J}{\A;\sigma;\Gamma \vdash}          % standard judgment lhs
+\newcommand{\Jp}{\A;\sigma';\Gamma' \vdash}        % primed judgment lhs
+\newcommand{\err}[1]{\mathrm{err}(#1)}
+\newcommand{\sem}[1]{\llbracket #1 \rrbracket}
+\newcommand{\Dom}{\mathrm{dom}}
+\newcommand{\backend}{\mathit{backend}}
+\newcommand{\fixed}{\mathit{fixed}}
+\newcommand{\custom}{\mathit{custom}}
+\newcommand{\runfixed}{\mathit{run\_fixed}}
+\newcommand{\llmcall}{\mathit{llm\_call}}
+\newcommand{\apply}{\mathit{apply}}
+
+% =============================================================================
+\begin{document}
+
+% ---- Title (single column) --------------------------------------------------
+\begin{center}
+  {\Large\bfseries AWL: A Declarative Agent Workflow Language\\[4pt]
+   with Big-Step Operational Semantics}\\[10pt]
+  {\normalsize
+    Ankush Chandra \quad Gautam Panigrahi \quad Kunal Elchipuram}\\[3pt]
+  {\small Department of Computer Science, San Jose State University}\\[3pt]
+  {\small May 2026}
+\end{center}
+
+% ---- Abstract (single column) -----------------------------------------------
+\begin{center}
+\begin{minipage}{0.88\linewidth}
+\small\textbf{Abstract.}
+We present AWL (Agent Workflow Language), a statically-structured
+domain-specific language for composing multi-agent AI workflows.  AWL provides
+first-class constructs for declaring agents backed by Python modules, HTTP
+endpoints, large language models, or deterministic fixed-agent roles, and for
+composing them with sequential bindings, conditionals, retries, and structured
+error recovery.  We formalise the language with a big-step operational semantics
+using three environments---variable~$\sigma$, agent~$\A$, and
+configuration~$\Gamma$---and define evaluation judgements for both expressions
+and statements.  The language is implemented in Haskell using Parsec for
+parsing and a monadic big-step interpreter.  A suite of 49 integration tests
+validates the implementation against the formal specification.
+\end{minipage}
+\end{center}
+
+\vspace{6pt}
+\hrule
+\vspace{6pt}
+
+% ---- Body (two columns) -----------------------------------------------------
+\begin{multicols}{2}
+
+% =============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+The proliferation of large language model (LLM) APIs has enabled a new paradigm
+of \emph{agentic} computation, in which complex tasks are decomposed across
+multiple co-operating AI agents.  Frameworks such as LangChain~\cite{langchain},
+AutoGen~\cite{autogen}, and n8n~\cite{n8n} provide workflow orchestration
+capabilities, but they do so through library APIs or visual editors that lack a
+formal specification.
+
+Without a formal semantics it is difficult to reason about error propagation,
+determinism of agent dispatch, the scope of variable bindings, or the precise
+conditions under which a workflow may fail or recover.  Developers must rely on
+documentation and runtime experimentation to understand pipeline behaviour.
+
+\subsection{Motivation and Problem Statement}
+
+We identify three concrete gaps in the current state of the art:
+
+\begin{enumerate}
+  \item \textbf{No formal model.}  Existing orchestration tools lack an
+        operational semantics, making formal reasoning about correctness
+        impossible.
+  \item \textbf{Implicit error handling.}  Error propagation rules are
+        ad hoc and backend-specific rather than defined at the language level.
+  \item \textbf{Agents as library objects.}  Current frameworks treat agents as
+        library instances rather than named, first-class language entities with
+        declared backends and arities.
+\end{enumerate}
+
+\subsection{Contributions}
+
+This paper makes the following contributions:
+
+\begin{itemize}
+  \item A declarative surface syntax for multi-agent workflow programs
+        (\S\ref{sec:syntax}).
+  \item A big-step operational semantics with three-environment judgements
+        covering expressions, statements, error propagation, retry, and
+        try/catch (\S\ref{sec:semantics}).
+  \item A complete Haskell implementation: Parsec lexer/parser, monadic
+        big-step interpreter, deterministic fixed-agent stubs, and optional
+        live LLM backend integration (\S\ref{sec:implementation}).
+  \item A 49-case integration test suite (\S\ref{sec:testing}).
+\end{itemize}
+
+% =============================================================================
+\section{Language Overview}
+\label{sec:syntax}
+
+An AWL program is a sequence of statements evaluated top-to-bottom.
+The language is dynamically typed: runtime values are strings, numbers,
+booleans, records, lists, null, or error payloads.  There is no static
+type-checker; type errors surface as runtime failures.
+
+\subsection{Abstract Syntax}
+
+The abstract syntax is defined in \texttt{Syntax.hs} and the formal
+specification \texttt{agent\_workflow\_language.txt}.
+
+\medskip
+\noindent\textbf{Expressions}
+\[
+\begin{array}{rcl}
+e & ::= & c \;\mid\; x \;\mid\; e.f \;\mid\; A(e_1,\ldots,e_n) \\
+  & \mid & e_1 \oplus e_2 \;\mid\; \{f_i{=}e_i\} \;\mid\; e \rhd A
+\end{array}
+\]
+where $c$ is a constant (string, number, boolean, or null), $x$ a variable,
+$e.f$ field projection, $A(\ldots)$ an agent call, $e_1 \oplus e_2$ a
+binary operation, $\{f_i{=}e_i\}$ a record literal, and $e \rhd A$
+a pipeline expression.
+
+\medskip
+\noindent\textbf{Statements}
+\[
+\begin{array}{rcl}
+s & ::= & \texttt{config}\;\{c_i{=}e_i\} \\
+  & \mid & \texttt{agent}\;A\;\texttt{from}\;b \\
+  & \mid & \texttt{agent}\;A = \texttt{FixedAgent}(k) \\
+  & \mid & \texttt{agent}\;A = \texttt{CustomAI}(\textit{prompt}{=}e,\textit{model}{=}m)\\
+  & \mid & \texttt{let}\;x = e \\
+  & \mid & \texttt{if}\;e\;\texttt{then}\;s_1\;\texttt{else}\;s_2 \\
+  & \mid & s_1\,;\,s_2 \;\mid\; \texttt{fail}\;e \\
+  & \mid & \texttt{retry}\;n\;s \\
+  & \mid & \texttt{try}\;s_1\;\texttt{catch}\;x \Rightarrow s_2
+\end{array}
+\]
+
+\noindent\textbf{Backends and Fixed Kinds}
+\[
+\begin{array}{rcl}
+b & ::= & \texttt{python:}"f" \mid \texttt{http:}"u"
+    \mid \texttt{llm:}"m" \mid \texttt{mock:}"v"\\[3pt]
+k & ::= & \textit{Planner} \mid \textit{TaskSplitter}
+    \mid \textit{Extractor} \mid \textit{Critic} \\
+  &     & \mid\;\textit{Writer} \mid \textit{Summarizer}
+    \mid \textit{Validator} \mid \textit{Guardrail} \\
+  &     & \mid\;\textit{Router} \mid \textit{Merger} \mid \textit{Ranker}
+\end{array}
+\]
+
+\subsection{Values}
+\[
+v \;::=\; c \;\mid\; \{f_1{=}v_1,\ldots,f_n{=}v_n\}
+         \;\mid\; \err{v}
+\]
+Error values $\err{v}$ represent runtime failures carrying a payload $v$
+(typically a descriptive string).  In the Haskell implementation they are
+represented as the type constructor \texttt{EErr Value} rather than being
+embedded inside the value domain.
+
+\subsection{Runtime Environments}
+\[
+\begin{array}{rcl}
+\sigma & : & \textit{Var} \rightharpoonup \textit{Val}
+  \quad\text{(variable env.)} \\[2pt]
+\A     & : & \textit{AgentId} \rightharpoonup \textit{AgentDef}
+  \quad\text{(agent env.)} \\[2pt]
+\Gamma & : & \textit{ConfigKey} \rightharpoonup \textit{Val}
+  \quad\text{(config env.)}
+\end{array}
+\]
+\[
+\textit{AgentDef} \;::=\; \backend(b)
+  \mid \fixed(k)
+  \mid \custom(\textit{prompt},m)
+\]
+
+In the Haskell implementation all three environments are bundled in a single
+record:
+
+\begin{lstlisting}[style=hs]
+data EvalState = EvalState
+  { sVar    :: Map String Value    -- sigma
+  , sAgent  :: Map String AgentDef -- A
+  , sConfig :: Map String Value    -- Gamma
+  }
+\end{lstlisting}
+
+% =============================================================================
+\section{Big-Step Operational Semantics}
+\label{sec:semantics}
+
+We define two evaluation relations following the big-step style of Plotkin~\cite{plotkin}:
+
+\begin{itemize}
+  \item $\J\; e \Downarrow v$ ---
+        expression $e$ evaluates to value $v$
+  \item $\J\; s \Downarrow \sigma';\Gamma'$ ---
+        statement $s$ transforms $(\sigma,\Gamma)$ to $(\sigma',\Gamma')$
+\end{itemize}
+
+The agent environment $\A$ is updated mutably by declaration statements; it
+is read-only during expression evaluation.
+
+\textbf{Error Propagation (E-Prop).}  For any composite form, if a
+constituent sub-evaluation yields $\err{v}$, the enclosing construct
+immediately evaluates to $\err{v}$ without executing further sub-terms.
+This is implemented via the \texttt{bindE} combinator:
+
+\begin{lstlisting}[style=hs]
+-- E-Prop: short-circuit on EErr
+bindE :: EvalIO a -> (a -> EvalIO b)
+      -> EvalIO b
+bindE m f = do
+  r <- m
+  case r of
+    EOk a  -> f a
+    EErr v -> return (EErr v)
+\end{lstlisting}
+
+\subsection{Expression Rules}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{E-Const}]
+  { }
+  { \J c \Downarrow c }
+
+\inferrule*[right=\textsc{E-Var}]
+  { \sigma(x) = v }
+  { \J x \Downarrow v }
+
+\inferrule*[right=\textsc{E-VarErr}]
+  { x \notin \Dom(\sigma) }
+  { \J x \Downarrow \err{\texttt{"unbound variable"}}}
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{E-Proj}]
+  { \J e \Downarrow \{\ldots,\,f{=}v,\,\ldots\} }
+  { \J e.f \Downarrow v }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{E-Op}]
+  { \J e_1 \Downarrow v_1 \\
+    \J e_2 \Downarrow v_2 \\
+    v = \sem{\oplus}(v_1,v_2) }
+  { \J e_1 \oplus e_2 \Downarrow v }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{E-Rec}]
+  { \J e_i \Downarrow v_i \quad \forall\,i \in 1..n }
+  { \J \{f_i{=}e_i\} \Downarrow \{f_i{=}v_i\} }
+\end{mathpar}
+
+The three agent-dispatch rules correspond to the three \texttt{AgentDef}
+constructors in \texttt{Syntax.hs}:
+
+\begin{mathpar}
+\inferrule*[right=\textsc{E-Agent-Backend}]
+  { \A(A) = \backend(b) \\
+    \J e_i \Downarrow v_i \quad \forall\,i \\
+    b(\Gamma,v_1,\ldots,v_n) \Rightarrow v }
+  { \J A(e_1,\ldots,e_n) \Downarrow v }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{E-Agent-Fixed}]
+  { \A(A) = \fixed(k) \\
+    \J e_i \Downarrow v_i \quad \forall\,i \\
+    \runfixed(k,v_1,\ldots,v_n) \Rightarrow v }
+  { \J A(e_1,\ldots,e_n) \Downarrow v }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{E-Agent-Custom}]
+  { \A(A) = \custom(\textit{prompt},m) \\
+    \J e \Downarrow v_{\textit{in}} \\
+    \llmcall(\Gamma,m,\textit{prompt},v_{\textit{in}}) \Rightarrow v }
+  { \J A(e) \Downarrow v }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{E-Pipe}]
+  { \A(A) = d \\
+    \J e \Downarrow v \\
+    \apply(d,\Gamma,v) \Rightarrow v' }
+  { \J e \rhd A \Downarrow v' }
+\end{mathpar}
+
+\subsection{Statement Rules}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-Config}]
+  { \J e_i \Downarrow v_i \quad \forall\,i }
+  { \J \texttt{config}\;\{c_i{=}e_i\}
+      \Downarrow \sigma;\,\Gamma[c_i{\mapsto}v_i] }
+\end{mathpar}
+
+The three declaration rules install the agent into $\A$; the variable and
+config environments are passed through unchanged:
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-Decl-Backend}]
+  { }
+  { \J \texttt{agent}\;A\;\texttt{from}\;b \;\Downarrow\; \sigma;\Gamma \\\\
+    (\A := \A[A \mapsto \backend(b)]) }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-Decl-Fixed}]
+  { }
+  { \J \texttt{agent}\;A{=}\texttt{FixedAgent}(k) \;\Downarrow\; \sigma;\Gamma \\\\
+    (\A := \A[A \mapsto \fixed(k)]) }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-Decl-Custom}]
+  { \J e \Downarrow v_p }
+  { \J \texttt{agent}\;A{=}\texttt{CustomAI}(\ldots)
+        \;\Downarrow\; \sigma;\Gamma \\\\
+    (\A := \A[A \mapsto \custom(v_p,m)]) }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-Let}]
+  { \J e \Downarrow v }
+  { \J \texttt{let}\;x{=}e \;\Downarrow\; \sigma[x{\mapsto}v];\,\Gamma }
+
+\inferrule*[right=\textsc{S-Seq}]
+  { \J s_1 \Downarrow \sigma';\Gamma' \\
+    \A;\sigma';\Gamma' \vdash s_2 \Downarrow \sigma'';\Gamma'' }
+  { \J s_1\,;\,s_2 \;\Downarrow\; \sigma'';\Gamma'' }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-IfTrue}]
+  { \J e \Downarrow \texttt{true} \\
+    \J s_1 \Downarrow \sigma';\Gamma' }
+  { \J \texttt{if}\;e\;\texttt{then}\;s_1\;\texttt{else}\;s_2
+      \Downarrow \sigma';\Gamma' }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-IfFalse}]
+  { \J e \Downarrow \texttt{false} \\
+    \J s_2 \Downarrow \sigma';\Gamma' }
+  { \J \texttt{if}\;e\;\texttt{then}\;s_1\;\texttt{else}\;s_2
+      \Downarrow \sigma';\Gamma' }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-Fail}]
+  { \J e \Downarrow v }
+  { \J \texttt{fail}\;e \;\Downarrow\; \err{v} }
+\end{mathpar}
+
+\subsection{Extension Rules: Retry and Try/Catch}
+
+The \texttt{retry} construct re-executes a body statement up to $n$
+additional times on failure.  The three rules cover the three cases:
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-Retry-OK}]
+  { \J s \Downarrow \sigma';\Gamma' }
+  { \J \texttt{retry}\;n\;s \Downarrow \sigma';\Gamma' }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-Retry-Step}]
+  { \J s \Downarrow \err{v} \quad n > 0 \\
+    \J \texttt{retry}\;(n{-}1)\;s \Downarrow r }
+  { \J \texttt{retry}\;n\;s \Downarrow r }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-Retry-Done}]
+  { \J s \Downarrow \err{v} }
+  { \J \texttt{retry}\;0\;s \Downarrow \err{v} }
+\end{mathpar}
+
+The \texttt{try/catch} construct intercepts an error value and makes it
+available to the handler under a user-chosen variable name:
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-Try-OK}]
+  { \J s_1 \Downarrow \sigma';\Gamma' }
+  { \J \texttt{try}\;s_1\;\texttt{catch}\;x{\Rightarrow}s_2
+      \Downarrow \sigma';\Gamma' }
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule*[right=\textsc{S-Try-Catch}]
+  { \J s_1 \Downarrow \err{v} \\
+    \A;\sigma[x{\mapsto}v];\Gamma \vdash s_2 \Downarrow \sigma';\Gamma' }
+  { \J \texttt{try}\;s_1\;\texttt{catch}\;x{\Rightarrow}s_2
+      \Downarrow \sigma';\Gamma' }
+\end{mathpar}
+
+% =============================================================================
+\section{Implementation}
+\label{sec:implementation}
+
+The AWL toolchain is implemented in approximately 1{,}000 lines of Haskell
+across four modules, built with Cabal.  Runtime dependencies are
+\texttt{parsec}, \texttt{containers}, \texttt{aeson},
+\texttt{http-conduit}, \texttt{bytestring}, \texttt{text}, and
+\texttt{vector}.
+
+\begin{center}
+\small
+\begin{tabular}{ll}
+\toprule
+Module & Role \\
+\midrule
+\texttt{Syntax.hs}       & Pure AST types \\
+\texttt{Parser.hs}       & Lexer + Parsec parser \\
+\texttt{Interpreter.hs}  & Big-step evaluator \\
+\texttt{Main.hs}         & CLI driver \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\texttt{Syntax.hs} is intentionally free of I/O or Parsec imports so that
+both the parser and interpreter can depend on it without circular
+dependencies.
+
+\subsection{Lexer and Tokenizer}
+
+The lexer is built with Parsec's \texttt{Text.Parsec.Token} module.  A
+\texttt{LanguageDef} record specifies the token structure of AWL:
+
+\begin{lstlisting}[style=hs, caption={Lexer definition -- Parser.hs}]
+langDef = emptyDef
+  { PT.commentLine     = "//"
+  , PT.commentStart    = "/*"
+  , PT.commentEnd      = "*/"
+  , PT.identStart      = letter <|> char '_'
+  , PT.identLetter     = alphaNum <|> char '_'
+  , PT.reservedOpNames =
+      ["=","==","!=",">","<",">=","<="
+      ,"+","-","*","/","&&","||",".","=>",":"]
+  , PT.reservedNames   = reservedNamesList
+  , PT.caseSensitive   = True }
+\end{lstlisting}
+
+Reserved words include \texttt{config}, \texttt{agent}, \texttt{from},
+\texttt{let}, \texttt{if}, \texttt{then}, \texttt{else}, \texttt{fail},
+\texttt{retry}, \texttt{try}, \texttt{catch}, \texttt{print},
+\texttt{FixedAgent}, \texttt{CustomAI}, \texttt{true}, \texttt{false},
+and \texttt{null}.  The call to \texttt{PT.makeTokenParser} derives
+whitespace-skipping parsers for identifiers, string and numeric literals,
+operators, and delimiters automatically.
+
+\subsection{Parser}
+
+The parser transforms a token stream into a single right-nested \texttt{SSeq}
+tree.  Its public entry point is:
+
+\begin{lstlisting}[style=hs]
+parseProgram :: FilePath -> String
+             -> Either ParseError Stmt
+parseProgram = P.parse program
+\end{lstlisting}
+
+\noindent\textbf{Expression parsing} uses \texttt{buildExpressionParser} over
+a five-level precedence table:
+
+\begin{center}
+\small
+\begin{tabular}{lll}
+\toprule
+Level & Operators & Assoc. \\
+\midrule
+1 (high) & \texttt{* /}           & Left \\
+2        & \texttt{+ -}           & Left \\
+3        & \texttt{== != > < >= <=} & None \\
+4        & \texttt{\&\&}          & Left \\
+5 (low)  & \texttt{||}            & Left \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Postfix field projections (\texttt{e.f}) chain as a left-recursive postfix
+rule applied after any atom:
+
+\begin{lstlisting}[style=hs]
+postfix = atom >>= go
+  where
+    go e = (do reservedOp "."
+               f <- fieldName
+               go (EProj e f))
+           <|> return e
+\end{lstlisting}
+
+\noindent\textbf{Statement parsing} uses \texttt{P.choice} over eight
+alternatives.  Braced blocks \texttt{\{ s$_1$; s$_2$; \ldots \}} desugar to
+right-nested \texttt{SSeq} nodes, directly matching the S-Seq rule:
+
+\begin{lstlisting}[style=hs]
+stmtBlock = do
+  void (symbol "{")
+  ss <- sepEndBy1 stmt semi
+  void (symbol "}")
+  return (foldr1 SSeq ss)
+\end{lstlisting}
+
+Agent declarations branch on the token following the agent name:
+
+\begin{lstlisting}[style=hs]
+stmtAgent = do
+  reserved "agent"; name <- identifier
+  choice
+    [ do reserved "from"; b <- backendP
+         return (SAgentBackend name b)
+    , do reservedOp "="; agentRhs name ]
+\end{lstlisting}
+
+\subsection{Abstract Syntax Tree}
+
+The \texttt{Syntax} module defines all AST types.  The key types are:
+
+\begin{lstlisting}[style=hs, caption={Value -- Syntax.hs}]
+data Value
+  = VString String | VNumber Double
+  | VBool   Bool   | VList   [Value]
+  | VRecord [(String, Value)]
+  | VNull
+  deriving (Eq, Show)
+\end{lstlisting}
+
+\begin{lstlisting}[style=hs, caption={Expr -- Syntax.hs}]
+data Expr
+  = EConst  Value             -- c
+  | EVar    String            -- x
+  | EProj   Expr String       -- e.f
+  | ECall   String [Expr]     -- A(e1,...,en)
+  | EBin    BinOp Expr Expr   -- e1 op e2
+  | EList   [Expr]
+  | ERecord [(String, Expr)]  -- {fi=ei}
+  deriving (Eq, Show)
+\end{lstlisting}
+
+\begin{lstlisting}[style=hs, caption={Stmt -- Syntax.hs}]
+data Stmt
+  = SConfig      [(String, Expr)]
+  | SAgentBackend String Backend
+  | SAgentFixed   String Kind
+  | SAgentCustom  String Expr (Maybe String)
+  | SLet         String Expr
+  | SIf          Expr Stmt Stmt
+  | SSeq         Stmt Stmt
+  | SFail        Expr
+  | SRetry       Int  Stmt
+  | STryCatch    Stmt String Stmt
+  | SPrint       Expr
+  deriving (Eq, Show)
+\end{lstlisting}
+
+\subsection{Interpreter / Evaluator}
+
+The interpreter implements the big-step rules as a monadic evaluator in
+\texttt{IO}.  The result type \texttt{EResult~a} directly mirrors the
+semantic outcome distinction:
+
+\begin{lstlisting}[style=hs]
+data EResult a = EOk a | EErr Value
+  deriving (Eq, Show)
+type EvalIO a = IO (EResult a)
+\end{lstlisting}
+
+Each \texttt{evalExpr} case is labelled with its corresponding rule
+name.  Variable lookup (E-Var / E-VarErr):
+
+\begin{lstlisting}[style=hs]
+-- (E-Var / E-VarErr)
+evalExpr st (EVar x) =
+  case Map.lookup x (sVar st) of
+    Just v  -> okE v
+    Nothing -> errE (VString
+      ("unbound variable: " ++ x))
+\end{lstlisting}
+
+Field projection (E-Proj):
+
+\begin{lstlisting}[style=hs]
+-- (E-Proj)
+evalExpr st (EProj e f) =
+  evalExpr st e `bindE` \v ->
+    case v of
+      VRecord fs -> case lookup f fs of
+        Just v' -> okE v'
+        Nothing -> errE (VString
+          ("no such field: " ++ f))
+      _ -> errE (VString
+             ("field access on non-record"))
+\end{lstlisting}
+
+Binary operator evaluation (E-Op):
+
+\begin{lstlisting}[style=hs]
+-- (E-Op)
+evalExpr st (EBin op e1 e2) =
+  evalExpr st e1 `bindE` \v1 ->
+  evalExpr st e2 `bindE` \v2 ->
+    case applyBinOp op v1 v2 of
+      Just v  -> okE v
+      Nothing -> errE (VString
+        ("type error in: " ++ show op))
+\end{lstlisting}
+
+The \texttt{applyBinOp} helper implements the denotation $\sem{\oplus}$:
+
+\begin{lstlisting}[style=hs]
+applyBinOp OpAdd (VNumber a)(VNumber b)
+  = Just (VNumber (a + b))
+applyBinOp OpAdd (VString a)(VString b)
+  = Just (VString (a ++ b))   -- concat
+applyBinOp OpGt  (VNumber a)(VNumber b)
+  = Just (VBool (a > b))
+applyBinOp OpAnd (VBool a)  (VBool b)
+  = Just (VBool (a && b))
+applyBinOp _ _ _ = Nothing   -- type error
+\end{lstlisting}
+
+Each \texttt{evalStmt} case is also labelled.  Sequencing (S-Seq):
+
+\begin{lstlisting}[style=hs]
+-- (S-Seq)
+evalStmt st (SSeq s1 s2) =
+  evalStmt st s1 `bindE` \st' ->
+    evalStmt st' s2
+\end{lstlisting}
+
+The \texttt{if} statement checks for a boolean condition (S-IfTrue /
+S-IfFalse):
+
+\begin{lstlisting}[style=hs]
+-- (S-IfTrue / S-IfFalse)
+evalStmt st (SIf c s1 s2) =
+  evalExpr st c `bindE` \v ->
+    case v of
+      VBool True  -> evalStmt st s1
+      VBool False -> evalStmt st s2
+      _ -> errE (VString
+             "if-condition is not a boolean")
+\end{lstlisting}
+
+Retry (S-Retry-OK / S-Retry-Step / S-Retry-Done):
+
+\begin{lstlisting}[style=hs]
+-- (S-Retry-OK / Step / Done)
+evalStmt st (SRetry n s) = loop n
+  where
+    loop 0 = evalStmt st s  -- final attempt
+    loop k = do
+      r <- evalStmt st s
+      case r of
+        EOk st' -> okE st'
+        EErr _  -> loop (k - 1)
+\end{lstlisting}
+
+Try/catch (S-Try-OK / S-Try-Catch):
+
+\begin{lstlisting}[style=hs]
+-- (S-Try-OK / S-Try-Catch)
+evalStmt st (STryCatch s1 x s2) = do
+  r <- evalStmt st s1
+  case r of
+    EOk st' -> okE st'
+    EErr v  ->
+      evalStmt st { sVar =
+        Map.insert x v (sVar st) } s2
+\end{lstlisting}
+
+\subsection{Agent Backends}
+
+Agent execution is dispatched by \texttt{applyAgent} based on the
+\texttt{AgentDef} stored in $\A$:
+
+\begin{lstlisting}[style=hs]
+applyAgent st (ADBackend b)    vs =
+  runBackend (sConfig st) b vs
+applyAgent st (ADFixed k)      vs =
+  runFixedWorkflow (sConfig st) k vs
+applyAgent st (ADCustom p m)  [v] =
+  runLLM (sConfig st) m p v
+applyAgent _  (ADCustom _ _)   _  =
+  errE (VString "CustomAI: wrong arity")
+\end{lstlisting}
+
+\noindent\textbf{Backend behaviour:}
+
+\begin{itemize}
+  \item \texttt{mock:"v"} --- returns the wired constant immediately.
+  \item \texttt{python:"f"} / \texttt{http:"u"} --- logs the call
+        and returns a synthetic record
+        \texttt{\{backend, target, args, output\}}.
+  \item \texttt{llm:"m"} --- routes to the Anthropic Claude Messages
+        API when \texttt{real\_llm = true} and
+        \texttt{ANTHROPIC\_API\_KEY} is set; otherwise returns a
+        deterministic stub.
+\end{itemize}
+
+\noindent\textbf{Fixed agents.}  The eleven \texttt{Kind} values have
+deterministic stub implementations in \texttt{runFixed}.  For example,
+the \textit{Critic} agent scores input based on keyword presence:
+
+\begin{lstlisting}[style=hs]
+runFixedOne Critic v =
+  let txt    = lowerStr (valueText v)
+      hasNeg = any (`isInfixOf` txt)
+                ["bad","wrong","fail","error"]
+      score  = if hasNeg then 0.4 else 0.9
+  in VRecord
+       [ ("score",   VNumber score)
+       , ("critique", VString
+           (if hasNeg then "negative indicators"
+                      else "no issues")) ]
+\end{lstlisting}
+
+\noindent\textbf{CustomAI and live LLM.}  When \texttt{real\_llm = true}
+and the API key is available, \texttt{runLLM} constructs a raw HTTP
+POST to the Anthropic Messages API endpoint (no Haskell SDK exists):
+
+\begin{lstlisting}[style=hs]
+callClaudeWithSystem apiKey model sys inp = do
+  let body = A.object
+        [ "model"      .= model
+        , "max_tokens" .= (1024 :: Int)
+        , "system"     .= sys
+        , "messages"   .=
+            [A.object ["role"    .= "user"
+                      ,"content" .= inp]]
+        ]
+  initReq <- parseRequest
+    "POST https://api.anthropic.com/v1/messages"
+  let req = setRequestHeader "x-api-key"
+              [BS.pack apiKey] $ ...
+  result <- try (httpLBS req)
+  ...
+\end{lstlisting}
+
+The response field \texttt{content[0].text} is extracted, then
+\texttt{llmOutputValue} attempts to parse it as JSON; on failure it
+wraps the raw text in a \texttt{VString}.
+
+\subsection{CLI Driver}
+
+\texttt{Main.hs} provides the \texttt{awl} executable.  It accepts an
+optional file path (defaulting to stdin) and three output mode flags:
+
+\begin{center}
+\small
+\begin{tabular}{ll}
+\toprule
+Flag & Behaviour \\
+\midrule
+(none)            & Print all config and variable bindings \\
+\texttt{--quiet}        & Suppress output on success \\
+\texttt{--result-only}  & Print \texttt{vars["result"]} as text \\
+\texttt{--result-json}  & Print \texttt{vars["result"]} as JSON \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A non-zero exit code is returned on both parse errors and evaluation
+failures, enabling shell-level error detection.
+
+% =============================================================================
+\section{Workflow Example}
+\label{sec:workflow}
+
+We trace execution of the customer support triage pipeline
+(\texttt{customer\_support\_triage.awl}) to illustrate how the semantic
+rules compose at runtime.
+
+\begin{lstlisting}[style=awl,
+    caption={Customer support triage (abridged)}]
+config { real_llm = true,
+         llm_model = "claude-opus-4-7" };
+
+agent Guard    = FixedAgent(Guardrail);
+agent Extract  = FixedAgent(Extractor);
+agent Route    = FixedAgent(Router);
+agent Draft    = FixedAgent(Writer);
+agent Validate = FixedAgent(Validator);
+agent Critique = FixedAgent(Critic);
+agent Summarize = FixedAgent(Summarizer);
+
+let ticket = "Customer charged twice...";
+let safety = Guard(ticket);
+let facts  = Extract(safety.output);
+let route  = Route(facts.output);
+let draft  = Draft({ route = route.output,
+                     facts = facts.output });
+let validation = Validate(draft.output);
+let critique   = Critique(validation.output);
+let summary    = Summarize({
+  route = route.output,
+  draft = draft.output });
+
+let result = { route = route.output,
+               drafted_response = draft.output,
+               summary = summary.output }
+\end{lstlisting}
+
+\subsection{Execution Trace}
+
+Each \texttt{let} statement fires a sequence of semantic rules:
+(1)~\textsc{E-Agent-Fixed} dispatches to \texttt{runFixedWorkflow};
+(2)~\textsc{E-Proj} accesses the \texttt{.output} field of the returned
+record; (3)~\textsc{S-Let} stores the result into $\sigma$.
+The program executes as a chain of \textsc{S-Seq} reductions, threading the
+updated state through each step:
+
+\begin{center}
+\small
+\begin{tabular}{ll}
+\toprule
+Variable & Value (summarized) \\
+\midrule
+\texttt{ticket}     & \texttt{"Customer charged twice..."} \\
+\texttt{safety}     & \texttt{\{safe=true, payload=...\}} \\
+\texttt{facts}      & \texttt{\{extracted="Customer",...\}} \\
+\texttt{route}      & \texttt{\{route="commerce",...\}} \\
+\texttt{draft}      & \texttt{\{draft="draft about:..."\}} \\
+\texttt{validation} & \texttt{\{valid=true, payload=...\}} \\
+\texttt{critique}   & \texttt{\{score=0.9,...\}} \\
+\texttt{summary}    & \texttt{\{summary="...",key\_points=[...]\}}\\
+\texttt{result}     & \texttt{\{route=..., drafted\_response=...\}}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Pipeline Data Flow}
+
+The linear agent chain is formed entirely by \textsc{E-Proj} feeding
+the \texttt{.output} field of one agent's record into the argument of
+the next:
+
+\[
+\textit{ticket}
+\to \text{Guard}
+\to \text{Extract}
+\to \text{Route}
+\to \text{Draft}
+\to \text{Validate}
+\to \text{Critique}
+\to \text{Summarize}
+\]
+
+\subsection{Error Recovery Constructs}
+
+The \texttt{retry} and \texttt{try/catch} constructs can be used to
+make any step in the pipeline fault-tolerant without restructuring
+surrounding code.  A demonstrative excerpt from \texttt{example.awl}:
+
+\begin{lstlisting}[style=awl]
+// Retry Summarize up to 2 extra times on fail
+if critique.score > 0.8 then
+  let result = summary
+else
+  retry 2 { let result = Summarize(raw) };
+
+// Structured error recovery
+try {
+  fail "demonstration of failure handling"
+} catch err => {
+  let recovered = err
+}
+\end{lstlisting}
+
+Under \textsc{S-Retry-Step}, each retry re-enters the body with the
+\emph{same} initial $\sigma$---retries are stateless with respect to
+the outer environment.  Under \textsc{S-Try-Catch}, the error payload
+\texttt{err(v)} is bound to variable \texttt{err} in the handler,
+making the message directly accessible as a value.
+
+\subsection{Cloud Architecture Consensus Example}
+
+The most complex example,
+\texttt{cloud\_architecture\_consensus.awl}, demonstrates parallel
+CustomAI agent usage and multi-input merging via the \textit{Merger}
+fixed agent:
+
+\begin{lstlisting}[style=awl]
+agent AWSArchitect  = CustomAI(prompt = "...");
+agent AzureArchitect = CustomAI(prompt = "...");
+agent CostReviewer  = CustomAI(prompt = "...");
+agent Merge = FixedAgent(Merger);
+agent Judge = CustomAI(prompt = "...");
+
+let aws_p   = AWSArchitect(use_case);
+let azure_p = AzureArchitect(use_case);
+let cost    = CostReviewer({
+  aws = aws_p.output, azure = azure_p.output });
+
+let packet  = Merge(aws_p.output,
+                    azure_p.output,
+                    cost.output);
+let decision = Judge(packet.output);
+\end{lstlisting}
+
+The \textit{Merger} agent accepts a variable number of arguments
+(matched by the multi-arity \textsc{E-Agent-Fixed} rule) and returns a
+single consolidated record, which the downstream \textit{Judge} agent
+then receives as its sole input.
+
+% =============================================================================
+\section{Testing}
+\label{sec:testing}
+
+The project includes 49 integration tests in \texttt{tests/*.awl}, executed
+by \texttt{tests/run\_tests.sh}.  The harness builds the \texttt{awl}
+binary via Cabal, runs each test with \texttt{ANTHROPIC\_API\_KEY} unset
+(forcing deterministic stubs), and checks output against inline
+directives:
+
+\begin{center}
+\small
+\begin{tabular}{ll}
+\toprule
+Directive & Assertion \\
+\midrule
+\texttt{// EXPECT\_OK}     & Exit 0, stdout has \texttt{[ok]} \\
+\texttt{// EXPECT\_ERR: s} & Non-zero exit, stderr contains $s$ \\
+\texttt{// CHECK: s}       & Stdout contains substring $s$ \\
+\texttt{// NOT: s}         & Stdout does not contain $s$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Coverage spans:
+
+\begin{itemize}
+  \item Arithmetic, string concatenation, and comparison operators.
+  \item Boolean logic and short-circuit error propagation.
+  \item Record construction, projection, and structural equality.
+  \item All error-propagation paths (RHS of \texttt{let}, operands
+        of binary ops, record fields, agent arguments).
+  \item \texttt{if}-true, \texttt{if}-false, and non-boolean
+        condition errors.
+  \item \texttt{fail}, \texttt{try/catch}, and nested error binding.
+  \item \texttt{retry} under both success and repeated failure.
+  \item All four backend types: \texttt{mock}, \texttt{python},
+        \texttt{http}, and \texttt{llm} stub.
+  \item All eleven fixed-agent kinds.
+  \item \texttt{CustomAI} correct and incorrect arity.
+  \item \texttt{config} evaluation and LLM model selection.
+  \item \texttt{parse\_json} and \texttt{stringify} builtins.
+  \item Sequential variable shadowing via repeated \texttt{let}.
+  \item Reserved words used as record field names.
+\end{itemize}
+
+% =============================================================================
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+We have presented AWL, a declarative domain-specific language for AI agent
+workflow composition.  The language provides a clean surface syntax for
+declaring agents with heterogeneous backends, composing them with
+sequential bindings and control flow, and recovering from failures using
+\texttt{retry} and \texttt{try/catch}.  We gave a complete big-step
+operational semantics using three runtime environments, and demonstrated
+that the Haskell implementation is in direct correspondence with the
+semantic rules---every \texttt{evalExpr} and \texttt{evalStmt} case is
+annotated with its rule name.  A 49-case integration test suite validates
+this correspondence under deterministic stub execution.
+
+\medskip
+\noindent\textbf{Future work} includes:
+
+\begin{enumerate}
+  \item \textbf{Static type system.}  A polymorphic record type system
+        would catch field-access errors and agent arity mismatches at
+        compile time, enabling a formal type-safety proof.
+
+  \item \textbf{Parallel execution.}  The current semantics is strictly
+        sequential.  A \texttt{parallel \{ \ldots \}} construct with an
+        appropriate join semantics would improve throughput for independent
+        agent calls.
+
+  \item \textbf{Distributed runtime.}  Agent backends are currently
+        invoked in-process.  A networked runtime would allow agents to
+        run on separate machines or in sandboxed containers.
+
+  \item \textbf{Formal metatheory.}  A proof of progress and preservation
+        (or a suitable dynamically-typed analogue) would formally guarantee
+        that well-formed programs either terminate with a value or an error
+        and never get stuck.
+
+  \item \textbf{Streaming outputs.}  LLM backends currently return
+        complete responses.  Integrating streaming APIs would allow
+        downstream agents to begin processing before an upstream agent
+        finishes.
+\end{enumerate}
+
+% =============================================================================
+\begin{thebibliography}{9}
+
+\bibitem{langchain}
+H.~Chase et al.
+\textit{LangChain: Building Applications with LLMs through Composability}.
+GitHub, 2022.
+\url{https://github.com/langchain-ai/langchain}
+
+\bibitem{autogen}
+Q.~Wu et al.
+\textit{AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent
+Conversation}.
+arXiv:2308.08155, 2023.
+
+\bibitem{n8n}
+J.~Oberhauser.
+\textit{n8n: Fair-Code Workflow Automation}.
+GitHub, 2019.
+\url{https://github.com/n8n-io/n8n}
+
+\bibitem{plotkin}
+G.~Plotkin.
+\textit{A Structural Approach to Operational Semantics}.
+Technical Report DAIMI FN-19, Aarhus University, 1981.
+
+\bibitem{parsec}
+D.~Leijen and E.~Meijer.
+\textit{Parsec: Direct Style Monadic Parser Combinators for the Real World}.
+Technical Report UU-CS-2001-35, Utrecht University, 2001.
+
+\bibitem{pierce}
+B.~C.~Pierce.
+\textit{Types and Programming Languages}.
+MIT Press, 2002.
+
+\end{thebibliography}
+
+\end{multicols}
+\end{document}
