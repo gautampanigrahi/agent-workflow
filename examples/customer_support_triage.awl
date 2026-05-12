@@ -1,5 +1,6 @@
 config {
   real_llm = true,
+  allow_llm_fallback = true,
   llm_model = "claude-opus-4-7"
 };
 
@@ -17,30 +18,43 @@ let safety     = Guard(ticket);
 let facts      = Extract(safety.output);
 let route      = Route(facts.output);
 let draft      = Draft({ route = route.output, facts = facts.output, original_ticket = ticket });
-let validation = Validate(draft.output);
+try {
+  let draft_readable = parse_json(draft.output)
+} catch err => {
+  let draft_readable = draft.output
+};
+let validation = Validate(draft_readable);
 let critique   = Critique(validation.output);
-let summary    = Summarize({ route = route.output, draft = draft.output, critique = critique.output });
+try {
+  let critique_readable = parse_json(critique.output)
+} catch err => {
+  let critique_readable = critique.output
+};
+let summary    = Summarize({ route = route.output, draft = draft_readable, critique = critique_readable });
 
 print "--- safety check ---";
-print safety.output;
+print stringify(safety.output);
 print "--- extracted facts ---";
-print facts.output;
+print stringify(facts.output);
 print "--- route ---";
-print route.output;
+print stringify(route.output);
 print "--- drafted response ---";
-print draft.output;
+print stringify(draft_readable);
 print "--- validation ---";
-print validation.output;
+print stringify(validation.output);
 print "--- critique ---";
-print critique.output;
+print stringify(critique_readable);
 print "--- final summary ---";
-print summary.output;
+print stringify(summary.output);
 
 let result = {
   ticket = ticket,
   route = route.output,
-  drafted_response = draft.output,
+  drafted_response = draft_readable,
   validation = validation.output,
-  critique = critique.output,
+  critique = critique_readable,
   summary = summary.output
-}
+};
+
+print "--- final result json ---";
+print stringify(result)

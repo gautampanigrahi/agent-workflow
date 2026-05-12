@@ -1,20 +1,53 @@
--- | Concrete syntax → abstract syntax for the Agent Workflow Language
---   (section 2 of the spec).  Built on Parsec.
+
 module Parser
   ( parseProgram
   ) where
 
-import           Control.Monad        (void)
-import qualified Text.Parsec          as P
-import qualified Text.Parsec.Expr     as PE
-import qualified Text.Parsec.Token    as PT
-import           Text.Parsec.Language (emptyDef)
-import           Text.Parsec.String   (Parser)
+import           Control.Monad                 (void)
+import           Text.ParserCombinators.Parsec
 
 import           Syntax
 
-reservedNamesList :: [String]
-reservedNamesList =
+-- ====================================================================
+-- 1. Whitespace and comments  (the "lexer" half of the front-end).
+-- ====================================================================
+
+-- | Skip any combination of whitespace, @// ...@ line comments, and
+--   @/* ... */@ block comments.
+ws :: Parser ()
+ws = skipMany (try blockComment <|> try lineComment <|> void (many1 space))
+
+lineComment :: Parser ()
+lineComment = do
+  string "//"
+  manyTill anyChar (try (void newline) <|> eof)
+  return ()
+
+blockComment :: Parser ()
+blockComment = do
+  string "/*"
+  manyTill anyChar (try (string "*/"))
+  return ()
+
+-- | Run a parser, then consume the trailing whitespace.  This is the
+--   "lexeme" pattern: every token-level parser is wrapped in 'lexeme'
+--   so the rest of the grammar can ignore whitespace.
+lexeme :: Parser a -> Parser a
+lexeme p = do
+  x <- p
+  ws
+  return x
+
+-- | A literal string treated as a single token.
+symbol :: String -> Parser ()
+symbol s = lexeme (void (string s))
+
+-- ====================================================================
+-- 2. Reserved words and identifiers.
+-- ====================================================================
+
+reservedNames :: [String]
+reservedNames =
   [ "config", "agent", "from", "let", "if", "then", "else"
   , "fail", "retry", "try", "catch", "print"
   , "FixedAgent", "CustomAI", "prompt", "model"
@@ -22,151 +55,219 @@ reservedNamesList =
   , "python", "http", "llm", "mock"
   ]
 
--- | The lexical structure of the language.
-langDef :: PT.LanguageDef ()
-langDef = emptyDef
-  { PT.commentLine     = "//"
-  , PT.commentStart    = "/*"
-  , PT.commentEnd      = "*/"
-  , PT.identStart      = P.letter P.<|> P.char '_'
-  , PT.identLetter     = P.alphaNum P.<|> P.char '_'
-  , PT.reservedOpNames =
-      [ "=", "==", "!=", ">", "<", ">=", "<="
-      , "+", "-", "*", "/", "&&", "||", ".", "=>", ":"
-      ]
-  , PT.reservedNames   = reservedNamesList
-  , PT.caseSensitive   = True
-  }
+-- | Match a reserved word as a *whole* word — i.e. the next character
+--   must not extend it into an identifier.
+keyword :: String -> Parser ()
+keyword w = lexeme $ try $ do
+  string w
+  notFollowedBy (alphaNum <|> char '_')
 
-lexer :: PT.TokenParser ()
-lexer = PT.makeTokenParser langDef
+-- | A non-reserved identifier.  Letters / underscores, then letters /
+--   digits / underscores.  Reject any name that collides with a
+--   reserved word so we don't accidentally bind @if@ as a variable.
+identifier :: Parser String
+identifier = lexeme $ try $ do
+  c  <- letter <|> char '_'
+  cs <- many   (alphaNum <|> char '_')
+  let name = c : cs
+  if name `elem` reservedNames
+    then unexpected ("reserved word " ++ show name)
+    else return name
 
-identifier     :: Parser String
-identifier     = PT.identifier     lexer
-fieldName      :: Parser String
-fieldName      = identifier P.<|> P.choice (map reservedName reservedNamesList)
+fieldName :: Parser String
+fieldName = identifier <|> choice (map reservedField reservedNames)
   where
-    reservedName name = P.try (reserved name >> return name)
-reserved       :: String -> Parser ()
-reserved       = PT.reserved       lexer
-reservedOp     :: String -> Parser ()
-reservedOp     = PT.reservedOp     lexer
-parens         :: Parser a -> Parser a
-parens         = PT.parens         lexer
-semi           :: Parser String
-semi           = PT.semi           lexer
-comma          :: Parser String
-comma          = PT.comma          lexer
-commaSep       :: Parser a -> Parser [a]
-commaSep       = PT.commaSep       lexer
-whiteSpace     :: Parser ()
-whiteSpace     = PT.whiteSpace     lexer
-stringLit      :: Parser String
-stringLit      = PT.stringLiteral  lexer
-natural        :: Parser Integer
-natural        = PT.natural        lexer
-naturalOrFloat :: Parser (Either Integer Double)
-naturalOrFloat = PT.naturalOrFloat lexer
-symbol         :: String -> Parser String
-symbol         = PT.symbol         lexer
+    reservedField name = try (keyword name >> return name)
 
--- ---------- Expressions ----------------------------------------------
+-- ====================================================================
+-- 3. Literals.
+-- ====================================================================
+
+stringLitRaw :: Parser String
+stringLitRaw = lexeme $ do
+  char '"'
+  cs <- many (noneOf "\"")
+  char '"'
+  return cs
+
+naturalRaw :: Parser Integer
+naturalRaw = lexeme $ do
+  ds <- many1 digit
+  return (read ds)
+
+-- | A non-negative integer or floating-point literal — mirrors the
+--   slide's @num@ example, extended with an optional fractional part.
+numberRaw :: Parser Double
+numberRaw = lexeme $ do
+  whole <- many1 digit
+  frac  <- option "" $ try $ do
+    char '.'
+    ds <- many1 digit
+    return ('.' : ds)
+  return (read (whole ++ frac))
+
+-- ====================================================================
+-- 4. Operator literals.
+-- ====================================================================
+
+-- | Characters that may continue a multi-character operator.  We use
+--   this to make 'op' a longest-match parser: e.g. @=@ should fail
+--   when the next character is @=@ (so @==@ and @=>@ aren't shadowed).
+opCont :: String
+opCont = "=!<>&|.+-*/:"
+
+-- | Match operator @s@ exactly, refusing to consume it if a longer
+--   operator is starting.
+op :: String -> Parser ()
+op s = lexeme $ try $ do
+  string s
+  notFollowedBy (oneOf opCont)
+
+comma, semi, dot :: Parser ()
+comma = symbol ","
+semi  = symbol ";"
+dot   = symbol "."
+
+parens, braces :: Parser a -> Parser a
+parens p = do { symbol "("; x <- p; symbol ")"; return x }
+braces p = do { symbol "{"; x <- p; symbol "}"; return x }
+
+commaSep :: Parser a -> Parser [a]
+commaSep p = sepBy p comma
+
+-- ====================================================================
+-- 5. Expressions.
+-- ====================================================================
 
 expr :: Parser Expr
-expr = opExpr P.<?> "expression"
+expr = orExpr <?> "expression"
 
--- | Standard precedence climber for binary operators.
-opExpr :: Parser Expr
-opExpr = PE.buildExpressionParser table postfix
+orExpr :: Parser Expr
+orExpr = do
+  l <- andExpr
+  rest l
   where
-    binL s op = PE.Infix (reservedOp s >> return (EBin op)) PE.AssocLeft
-    binN s op = PE.Infix (reservedOp s >> return (EBin op)) PE.AssocNone
-    table =
-      [ [ binL "*"  OpMul, binL "/"  OpDiv ]
-      , [ binL "+"  OpAdd, binL "-"  OpSub ]
-      , [ binN "==" OpEq , binN "!=" OpNeq
-        , binN ">=" OpGte, binN "<=" OpLte
-        , binN ">"  OpGt , binN "<"  OpLt  ]
-      , [ binL "&&" OpAnd ]
-      , [ binL "||" OpOr  ]
+    rest l =  (do op "||"; r <- andExpr; rest (EBin OpOr l r))
+          <|> return l
+
+andExpr :: Parser Expr
+andExpr = do
+  l <- cmpExpr
+  rest l
+  where
+    rest l =  (do op "&&"; r <- cmpExpr; rest (EBin OpAnd l r))
+          <|> return l
+
+-- | Comparisons are non-associative — at most one in a chain.
+cmpExpr :: Parser Expr
+cmpExpr = do
+  l <- addExpr
+  option l $ do
+    o <- choice
+      [ op "==" >> return OpEq
+      , op "!=" >> return OpNeq
+      , op ">=" >> return OpGte
+      , op "<=" >> return OpLte
+      , op ">"  >> return OpGt
+      , op "<"  >> return OpLt
       ]
+    r <- addExpr
+    return (EBin o l r)
 
--- | After an atom we may chain field projections @.f@.
-postfix :: Parser Expr
-postfix = atom >>= go
+addExpr :: Parser Expr
+addExpr = do
+  l <- mulExpr
+  rest l
   where
-    go e = (do reservedOp "."; f <- fieldName; go (EProj e f))
-           P.<|> return e
+    rest l =  (do op "+"; r <- mulExpr; rest (EBin OpAdd l r))
+          <|> (do op "-"; r <- mulExpr; rest (EBin OpSub l r))
+          <|> return l
+
+mulExpr :: Parser Expr
+mulExpr = do
+  l <- postfixExpr
+  rest l
+  where
+    rest l =  (do op "*"; r <- postfixExpr; rest (EBin OpMul l r))
+          <|> (do op "/"; r <- postfixExpr; rest (EBin OpDiv l r))
+          <|> return l
+
+-- | Chained record-field projections @e.f.g@.
+postfixExpr :: Parser Expr
+postfixExpr = do
+  e <- atom
+  loop e
+  where
+    loop e =  (do dot; f <- fieldName; loop (EProj e f))
+          <|> return e
 
 atom :: Parser Expr
-atom =
-        parens expr
-  P.<|> listLit
-  P.<|> recordLit
-  P.<|> stringLitE
-  P.<|> numLitE
-  P.<|> nullLitE
-  P.<|> boolLitE
-  P.<|> identAtom
+atom =  parens expr
+    <|> listLit
+    <|> recordLit
+    <|> stringE
+    <|> numberE
+    <|> nullE
+    <|> boolE
+    <|> identAtom
 
-stringLitE :: Parser Expr
-stringLitE = (EConst . VString) <$> stringLit
+stringE :: Parser Expr
+stringE = do
+  s <- stringLitRaw
+  return (EConst (VString s))
 
-numLitE :: Parser Expr
-numLitE = do
-  n <- naturalOrFloat
-  return $ EConst $ VNumber $ case n of
-    Left  i -> fromIntegral i
-    Right f -> f
+numberE :: Parser Expr
+numberE = do
+  n <- numberRaw
+  return (EConst (VNumber n))
 
-boolLitE :: Parser Expr
-boolLitE = (reserved "true"  >> return (EConst (VBool True)))
-     P.<|> (reserved "false" >> return (EConst (VBool False)))
+boolE :: Parser Expr
+boolE =  (keyword "true"  >> return (EConst (VBool True)))
+     <|> (keyword "false" >> return (EConst (VBool False)))
 
-nullLitE :: Parser Expr
-nullLitE = reserved "null" >> return (EConst VNull)
+nullE :: Parser Expr
+nullE = keyword "null" >> return (EConst VNull)
 
 listLit :: Parser Expr
 listLit = do
-  void (symbol "[")
+  symbol "["
   es <- commaSep expr
-  void (symbol "]")
+  symbol "]"
   return (EList es)
 
 recordLit :: Parser Expr
 recordLit = do
-  void (symbol "{")
-  fs <- commaSep $ do
-    f <- fieldName
-    reservedOp "="
-    e <- expr
-    return (f, e)
-  void (symbol "}")
+  fs <- braces (commaSep field)
   return (ERecord fs)
+  where
+    field = do
+      f <- fieldName
+      op "="
+      e <- expr
+      return (f, e)
 
--- | An identifier optionally followed by an argument list
---   becomes either an agent call @A(e,…)@ or a variable @x@.
+-- | A bare identifier becomes either a call @A(e,…)@ or a variable.
 identAtom :: Parser Expr
 identAtom = do
   name  <- identifier
-  margs <- P.optionMaybe (parens (commaSep expr))
+  margs <- optionMaybe (parens (commaSep expr))
   return $ case margs of
     Just args -> ECall name args
     Nothing   -> EVar  name
 
--- ---------- Statements ----------------------------------------------
+-- ====================================================================
+-- 6. Statements.
+-- ====================================================================
 
--- | A program is one or more statements separated (and optionally
---   terminated) by @;@.
 program :: Parser Stmt
 program = do
-  whiteSpace
-  ss <- P.sepEndBy1 stmt semi
-  P.eof
+  ws
+  ss <- sepEndBy1 stmt semi
+  eof
   return (foldr1 SSeq ss)
 
 stmt :: Parser Stmt
-stmt = P.choice
+stmt = choice
   [ stmtBlock
   , stmtConfig
   , stmtAgent
@@ -176,57 +277,60 @@ stmt = P.choice
   , stmtRetry
   , stmtTryCatch
   , stmtPrint
-  ] P.<?> "statement"
+  ] <?> "statement"
 
--- | @{ s₁ ; s₂ ; … }@ groups statements; resolved to right-nested
---   'SSeq' so it satisfies S-Seq.
+-- | @{ s₁ ; s₂ ; … }@ is right-folded into 'SSeq'.
 stmtBlock :: Parser Stmt
 stmtBlock = do
-  void (symbol "{")
-  ss <- P.sepEndBy1 stmt semi
-  void (symbol "}")
+  symbol "{"
+  ss <- sepEndBy1 stmt semi
+  symbol "}"
   return (foldr1 SSeq ss)
 
 stmtConfig :: Parser Stmt
 stmtConfig = do
-  reserved "config"
-  void (symbol "{")
-  fs <- commaSep $ do
-    c <- fieldName
-    reservedOp "="
-    e <- expr
-    return (c, e)
-  void (symbol "}")
+  keyword "config"
+  fs <- braces (commaSep configField)
   return (SConfig fs)
+  where
+    configField = do
+      c <- fieldName
+      op "="
+      e <- expr
+      return (c, e)
 
 stmtAgent :: Parser Stmt
 stmtAgent = do
-  reserved "agent"
+  keyword "agent"
   name <- identifier
-  P.choice
-    [ do reserved "from"; b <- backendP; return (SAgentBackend name b)
-    , do reservedOp "=" ; agentRhs name
-    ]
+  (do keyword "from"
+      b <- backendP
+      return (SAgentBackend name b))
+   <|>
+   (do op "="
+       agentRhs name)
 
 agentRhs :: String -> Parser Stmt
 agentRhs name =
-       (do reserved "FixedAgent"; k <- parens kindP; return (SAgentFixed name k))
-  P.<|>(do reserved "CustomAI"
-           void (symbol "(")
-           reserved "prompt"; reservedOp "="; pe <- expr
-           m <- P.optionMaybe (do
-             void comma
-             reserved "model" ; reservedOp "="; stringLit)
-           void (symbol ")")
+       (do keyword "FixedAgent"
+           k <- parens kindP
+           return (SAgentFixed name k))
+   <|> (do keyword "CustomAI"
+           symbol "("
+           keyword "prompt"; op "="; pe <- expr
+           m <- optionMaybe $ try $ do
+             comma
+             keyword "model";  op "="; stringLitRaw
+           symbol ")"
            return (SAgentCustom name pe m))
 
 backendP :: Parser Backend
-backendP = P.choice
-  [ reserved "python" >> reservedOp ":" >> BPython <$> stringLit
-  , reserved "http"   >> reservedOp ":" >> BHttp   <$> stringLit
-  , reserved "llm"    >> reservedOp ":" >> BLlm    <$> stringLit
-  , reserved "mock"   >> reservedOp ":" >> (BMock . VString) <$> stringLit
-  ] P.<?> "backend"
+backendP = choice
+  [ keyword "python" >> op ":" >> (BPython           <$> stringLitRaw)
+  , keyword "http"   >> op ":" >> (BHttp             <$> stringLitRaw)
+  , keyword "llm"    >> op ":" >> (BLlm              <$> stringLitRaw)
+  , keyword "mock"   >> op ":" >> (BMock . VString   <$> stringLitRaw)
+  ] <?> "backend"
 
 kindP :: Parser Kind
 kindP = do
@@ -243,43 +347,52 @@ kindP = do
     "Router"              -> return Router
     "Merger"              -> return Merger
     "Ranker"              -> return Ranker
-    _                     -> P.unexpected ("agent kind " ++ show k)
+    _                     -> unexpected ("agent kind " ++ show k)
 
 stmtLet :: Parser Stmt
 stmtLet = do
-  reserved "let"
+  keyword "let"
   x <- identifier
-  reservedOp "="
+  op "="
   e <- expr
   return (SLet x e)
 
 stmtIf :: Parser Stmt
 stmtIf = do
-  reserved "if";   c  <- expr
-  reserved "then"; s1 <- stmt
-  reserved "else"; s2 <- stmt
+  keyword "if"   ; c  <- expr
+  keyword "then" ; s1 <- stmt
+  keyword "else" ; s2 <- stmt
   return (SIf c s1 s2)
 
 stmtFail :: Parser Stmt
-stmtFail = reserved "fail" >> SFail <$> expr
+stmtFail = do
+  keyword "fail"
+  e <- expr
+  return (SFail e)
 
 stmtRetry :: Parser Stmt
 stmtRetry = do
-  reserved "retry"
-  n <- natural
+  keyword "retry"
+  n <- naturalRaw
   s <- stmt
   return (SRetry (fromIntegral n) s)
 
 stmtTryCatch :: Parser Stmt
 stmtTryCatch = do
-  reserved "try"  ; s1 <- stmt
-  reserved "catch"; x  <- identifier
-  reservedOp "=>" ; s2 <- stmt
+  keyword "try"   ; s1 <- stmt
+  keyword "catch" ; x  <- identifier
+  op "=>"         ; s2 <- stmt
   return (STryCatch s1 x s2)
 
 stmtPrint :: Parser Stmt
-stmtPrint = reserved "print" >> SPrint <$> expr
+stmtPrint = do
+  keyword "print"
+  e <- expr
+  return (SPrint e)
 
--- | Top-level entry point.
-parseProgram :: FilePath -> String -> Either P.ParseError Stmt
-parseProgram = P.parse program
+-- ====================================================================
+-- 7. Entry point.
+-- ====================================================================
+
+parseProgram :: FilePath -> String -> Either ParseError Stmt
+parseProgram = parse program
